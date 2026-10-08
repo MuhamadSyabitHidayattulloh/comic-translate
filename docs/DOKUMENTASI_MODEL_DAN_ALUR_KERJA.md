@@ -1,6 +1,6 @@
 # Dokumentasi Model dan Alur Kerja Comic Translate
 
-Dokumen ini berisi panduan penggunaan model-model AI yang digunakan dalam **Comic Translate** (Deteksi Teks & Balon Kata, OCR, dan Inpainting) serta penjelasan alur kerja (*end-to-end workflow*) lengkap mulai dari pengunggahan gambar hingga rendering akhir terjemahan.
+Dokumen ini berisi panduan penggunaan model-model AI yang digunakan dalam **Comic Translate** (Deteksi Teks & Balon Kata, OCR, dan Inpainting), penjelasan alur kerja (*end-to-end workflow*) lengkap, serta **Panduan API untuk Developer (Kode Python)**.
 
 ---
 
@@ -154,7 +154,126 @@ Berikut adalah tahapan alur kerja lengkap dari saat gambar diunggah hingga hasil
 
 ---
 
-## 3. Ringkasan Penggunaan Ringkas
+## 3. Panduan Developer / Pemrograman (Python API Usage)
+
+Berikut adalah contoh penggunaan langsung modul-modul AI dalam kode Python untuk pengembang yang ingin mengintegrasikan modul secara terpisah atau memperluas fungsionalitas.
+
+### 3.1 Contoh Deteksi Teks & Balon Kata (Detection)
+
+```python
+import cv2
+from modules.detection.factory import DetectionEngineFactory
+
+# Load gambar (Format RGB NumPy array)
+image_bgr = cv2.imread("sample_comic.jpg")
+image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+# Inisialisasi engine deteksi via Factory (model default RT-DETR-v2)
+detector_engine = DetectionEngineFactory.create_engine(
+    settings=settings_obj,  # Objek konfigurasi settings
+    model_name='RT-DETR-v2',
+    backend='onnx'  # 'onnx' atau 'torch'
+)
+
+# Menjalankan deteksi -> mengembalikan list of TextBlock
+text_blocks = detector_engine.detect(image_rgb)
+
+for blk in text_blocks:
+    print(f"Jenis Blok: {blk.text_class}")  # 'text_bubble' atau 'text_free'
+    print(f"Koordinat Box [x1, y1, x2, y2]: {blk.xyxy}")
+```
+
+### 3.2 Contoh Optical Character Recognition (OCR)
+
+```python
+from modules.ocr.factory import OCRFactory
+
+# Membuat engine OCR untuk Bahasa Jepang
+ocr_engine = OCRFactory.create_engine(
+    settings=settings_obj,
+    source_lang_english='Japanese',
+    ocr_model='Default',  # MangaOCR untuk Jepang, PPOCRv5 untuk Latin/Chinese, dll.
+    backend='onnx'
+)
+
+# Pemotongan area teks dari gambar berdasarkan TextBlock
+x1, y1, x2, y2 = text_blocks[0].xyxy
+crop_img = image_rgb[int(y1):int(y2), int(x1):int(x2)]
+
+# Eksekusi OCR
+recognized_text = ocr_engine.recognize(crop_img)
+text_blocks[0].text = recognized_text
+print("Teks Terdeteksi:", recognized_text)
+```
+
+### 3.3 Contoh Inpainting (Pembersihan Latar Belakang)
+
+```python
+import numpy as np
+from modules.inpainting.lama import LaMa
+from modules.inpainting.schema import Config
+
+# Inisialisasi Model Inpainting LaMa
+inpainter = LaMa()
+inpainter.init_model(device="cuda", backend="onnx")
+
+# Membentuk Mask Hitam-Putih (2D NumPy array: 255 untuk teks/mask, 0 untuk background)
+h, w, _ = image_rgb.shape
+mask = np.zeros((h, w), dtype=np.uint8)
+
+for blk in text_blocks:
+    x1, y1, x2, y2 = map(int, blk.xyxy)
+    mask[y1:y2, x1:x2] = 255
+
+# Eksekusi Inpainting
+cleaned_image_rgb = inpainter.forward(image_rgb, mask, Config())
+
+# cleaned_image_rgb adalah gambar RGB uint8 yang bebas teks
+```
+
+### 3.4 Contoh Penerjemahan Teks (Translation)
+
+```python
+from modules.translation.processor import Translator
+
+# Inisialisasi Penerjemah (misal: Jepang -> Indonesia / Inggris)
+translator = Translator(
+    main_page=main_page_obj,
+    source_lang="Japanese",
+    target_lang="English"
+)
+
+# Memproses daftar TextBlock secara batch beserta konteks halaman
+translator.translate(text_blocks, image_rgb, extra_context="Comic translation context")
+
+for blk in text_blocks:
+    print(f"Asli: {blk.text} | Terjemahan: {blk.translation}")
+```
+
+### 3.5 Contoh Rendering Teks (Text Rendering)
+
+```python
+from modules.rendering.render import draw_text
+
+# Menggambar teks terjemahan di atas gambar yang telah di-inpaint
+rendered_image = draw_text(
+    image=cleaned_image_rgb,
+    blk_list=text_blocks,
+    font_pth="fonts/anime_font.ttf",
+    colour="#000000",
+    init_font_size=40,
+    min_font_size=10,
+    outline=True
+)
+
+# Simpan gambar hasil akhir
+rendered_bgr = cv2.cvtColor(rendered_image, cv2.COLOR_RGB2BGR)
+cv2.imwrite("translated_comic.jpg", rendered_bgr)
+```
+
+---
+
+## 4. Ringkasan Penggunaan Ringkas
 
 | Modul | Model Utama | Output Utama | Opsi Utama / Parameter |
 | :--- | :--- | :--- | :--- |
